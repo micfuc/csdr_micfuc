@@ -70,6 +70,15 @@ namespace Csdr {
             DcBlockCommand();
     };
 
+    class ReduceNoiseCommand: public Command {
+        public:
+            ReduceNoiseCommand();
+            unsigned int fftSize = 4096;
+            unsigned int wndSize = 32;
+            int dBthreshold = 0;
+            FilterModule<float>* module;
+    };
+
     class ConvertCommand: public Command {
         public:
             ConvertCommand();
@@ -251,4 +260,29 @@ namespace Csdr {
             std::string algorithm = "gardner";
     };
 
+    class CwDecoderCommand: public Command {
+        public:
+            CwDecoderCommand();
+        private:
+            unsigned int sampleRate;
+    };
+
+    class RttyDecoderCommand: public Command {
+        public:
+            RttyDecoderCommand();
+        private:
+            unsigned int sampleRate;
+            int targetFreq = 450;
+            int targetWidth = 170;
+            double baudRate = 45.45;
+            bool reverse = false;
+    };
+
+    class SstvDecoderCommand: public Command {
+        public:
+            SstvDecoderCommand();
+        private:
+            unsigned int sampleRate;
+            int targetFreq = 3000;
+    };
 }

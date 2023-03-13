@@ -123,6 +123,7 @@ char usage[]=
 "    fft_benchmark <fft_size> <fft_cycles> [--benchmark]\n"
 "    bandpass_fir_fft_cc <low_cut> <high_cut> <transition_bw> [window]\n"
 "    bandpass_fir_fft_cc --fifo <fifo_path> <transition_bw> [window]\n"
+"    reduce_noise_fft_ff [threshold] [window_width]\n"
 #endif
 #ifdef USE_IMA_ADPCM
 "    encode_ima_adpcm_s16_u8\n"
@@ -174,8 +175,9 @@ char usage[]=
 "    add_const_cc <i> <q>\n"
 "    tee <path> [buffers]\n"
 "    pll_cc (1 [alpha] |2 [bandwidth [damping_factor [ko [kd]]]])\n"
-"    pattern_search_u8_u8 <values_after> <pattern_values × N>\n" 
-"    dbpsk_decoder_c_u8\n" 
+"    pattern_search_u8_u8 <values_after> <pattern_values × N>\n"
+"    dbpsk_decoder_c_u8\n"
+"    cw_decoder_f_u8 <sample_rate>\n"
 "    bfsk_demod_cf <spacing> <filter_length>\n"
 "    normalized_timing_variance_u32_f <samples_per_symbol> <initial_sample_offset> [--debug]\n"
 "    ?<search_the_function_list>\n"
@@ -2009,6 +2011,69 @@ int main(int argc, char *argv[])
 
 #endif
 
+#ifdef USE_FFTW
+    if(!strcmp(argv[1],"reduce_noise_fft_ff")) //this command does not exist as a separate function
+    {
+        int threshold = 0;
+        int window_width = 32;
+        int fd;
+
+        if(fd=init_fifo(argc,argv))
+        {
+            while(!read_fifo_ctl(fd,"%d %u\n",&threshold,&window_width)) usleep(10000);
+        }
+        else
+        {
+            if(argc>2) sscanf(argv[2],"%d",&threshold);
+            if(argc>3) sscanf(argv[3],"%u",&window_width);
+        }
+
+        //calculate the FFT size and the other length parameters
+        int fft_size=4096;
+        int overlap_length = fft_size/64;
+        int input_size = fft_size - overlap_length;
+
+        if(!sendbufsize(getbufsize())) return -2;
+
+        //make FFT plans for continously processing the input
+        float* input = fft_malloc(fft_size*sizeof(float));
+        complexf* input_fourier = fft_malloc(fft_size*sizeof(complexf));
+        fft_plan_t* plan_forward = make_fft_r2c(fft_size, input, input_fourier, 1); //forward, do benchmark
+
+        complexf* output_fourier = fft_malloc(fft_size*sizeof(complexf));
+        float* output_1 = fft_malloc(fft_size*sizeof(float));
+        float* output_2 = fft_malloc(fft_size*sizeof(float));
+
+        //we create 2x output buffers so that one will preserve the previous overlap:
+        fft_plan_t* plan_inverse_1 = make_fft_c2r(fft_size, output_fourier, output_1, 1); //inverse, do benchmark
+        fft_plan_t* plan_inverse_2 = make_fft_c2r(fft_size, output_fourier, output_2, 1);
+
+        //we initialize this buffer to 0 as it will be taken as the overlap source for the first time:
+        for(int i=0;i<fft_size;i++) output_2[i]=0.0f;
+
+        //we pre-pad the input buffer with zeros
+        for(int i=input_size;i<fft_size;i++) input[i]=0.0f;
+
+        for(;;)
+        {
+            for(int odd=0;;odd=!odd) //the processing loop
+            {
+                FEOF_CHECK;
+                fread(input, sizeof(float), input_size, stdin);
+
+                fft_plan_t* plan_inverse = odd? plan_inverse_2:plan_inverse_1;
+                fft_plan_t* plan_contains_last_overlap = odd? plan_inverse_1:plan_inverse_2;
+                float* last_overlap = (float*)plan_contains_last_overlap->output + input_size;
+                reduce_noise_fft_ff (plan_forward, plan_inverse, threshold, window_width, last_overlap, overlap_length);
+
+                fwrite(plan_inverse->output, sizeof(float), input_size, stdout);
+                if(read_fifo_ctl(fd,"%d %u\n",&threshold,&window_width)) break;
+                TRY_YIELD;
+            }
+        }
+    }
+#endif
+
 #ifdef USE_IMA_ADPCM
 #define IMA_ADPCM_BUFSIZE BUFSIZE
 
@@ -3403,6 +3468,24 @@ int main(int argc, char *argv[])
             FREAD_C;
             dbpsk_decoder_c_u8((complexf*)input_buffer, local_output_buffer, the_bufsize);
             fwrite(local_output_buffer, sizeof(unsigned char), the_bufsize, stdout);
+            TRY_YIELD;
+        }
+        return 0;
+    }
+
+    if(!strcmp(argv[1], "cw_decoder_f_u8"))
+    {
+        if(!sendbufsize(initialize_buffers())) return -2;
+        unsigned char* local_output_buffer = (unsigned char*)malloc(sizeof(unsigned char)*the_bufsize);
+        int sample_rate;
+        sscanf(argv[2],"%d",&sample_rate);
+        errhead(); fprintf(stderr,"sample_rate = %d\n",sample_rate);
+        for(;;)
+        {
+            FEOF_CHECK;
+            FREAD_R;
+            int out_count = cw_decoder_f_u8((float*)input_buffer, local_output_buffer, the_bufsize, sample_rate);
+            if(out_count) fwrite(local_output_buffer, sizeof(unsigned char), out_count, stdout);
             TRY_YIELD;
         }
         return 0;

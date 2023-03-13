@@ -1,3 +1,20 @@
+# Copyright (c) 2021-2022 Jakob Ketterl <jakob.ketterl@gmx.de>
+#
+# This file is part of libcsdr.
+#
+# libcsdr is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# libcsdr is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with libcsdr.  If not, see <https://www.gnu.org/licenses/>.
+
 cmake_minimum_required (VERSION 3.0)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -8,8 +25,8 @@ if (CMAKE_BUILD_TYPE STREQUAL None)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-project (csdr VERSION 0.18.0)
-add_definitions(-DVERSION="${PROJECT_VERSION}-dev")
+project (csdr VERSION 0.18.1)
+add_definitions(-DVERSION="${PROJECT_VERSION}")
 
 enable_language(CXX)
 set(CMAKE_CXX_STANDARD 11)

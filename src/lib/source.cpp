@@ -94,8 +94,10 @@ template <typename T>
 void TcpSource<T>::stop() {
     run = false;
     if (thread != nullptr) {
-        thread->join();
-        delete(thread);
+        auto t = thread;
+        thread = nullptr;
+        t->join();
+        delete(t);
     }
 }
 

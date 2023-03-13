@@ -1101,6 +1101,90 @@ void apply_fir_fft_cc(fft_plan_t* plan, fft_plan_t* plan_inverse, complexf* taps
 }
 #endif
 
+#ifdef USE_FFTW
+void reduce_noise_fft_ff(fft_plan_t* plan, fft_plan_t* plan_inverse, int threshold, int window_size, float* last_overlap, int overlap_size)
+{
+    int plan_size = plan->size;
+    unsigned char gate[plan_size];
+    unsigned char gain[plan_size];
+    double level[plan_size];
+
+    //make sure window does not exceed half of the input size
+    window_size = window_size>plan_size/2? plan_size/2 : window_size;
+
+    //make sure window does not exceed unsigned char resolution
+    window_size = window_size<2? 2 : window_size>254? 254 : window_size;
+
+    //we are really interested in half-a-window
+    window_size >>= 1;
+
+    //calculate FFT on input buffer
+    fft_execute(plan);
+
+    //input and output data streams
+    complexf* in = plan->output;
+    complexf* out = plan_inverse->input;
+
+    //calculate signal's total squared power
+    double power = 0.0;
+    for(int i=0; i<plan_size; ++i)
+    {
+        power += level[i] = iof(in,i)*iof(in,i) + qof(in,i)*qof(in,i);
+    }
+
+    //calculate squared level to compare against
+    power = (power / plan_size) * pow(10.0, (double)threshold / 10.0);
+
+    //calculate signal's squared level and compare it against threshold
+    for(int i=0; i<plan_size; ++i)
+    {
+        gate[i] = level[i]>power? 1:0;
+    }
+
+    //compute initial gain for the first entry
+    gain[0] = 0;
+    for(int i=0; i<window_size; ++i)
+    {
+        gain[0] += gate[i] + gate[plan_size - i - 1];
+    }
+
+    //incrementally compute gains by moving window over gates
+    int prev = plan_size - window_size;
+    int next = window_size;
+    for(int i=1; i<plan_size; ++i)
+    {
+        gain[i] = gain[i-1] + gate[next] - gate[prev];
+        if(++prev>=plan_size) prev = 0;
+        if(++next>=plan_size) next = 0;
+    }
+
+    //filter out frequencies falling below threshold
+    for(int i=0; i<plan_size; ++i)
+    {
+        float f = (float)gain[i]/(window_size*2);
+        iof(out,i) = iof(in,i) * f;
+        qof(out,i) = qof(in,i) * f;
+    }
+
+    //calculate inverse FFT on the result
+    fft_execute(plan_inverse);
+
+    //add the overlap of the previous segment
+    float* result = plan_inverse->output;
+
+    for(int i=0; i<overlap_size; ++i)
+    {
+        float f = (float)i/overlap_size;
+        result[i] = (result[i]/plan_size)*f + last_overlap[i]*(1.0f-f);
+    }
+
+    for(int i=overlap_size; i<plan_size; ++i)
+    {
+        result[i]/=plan_size;
+    }
+}
+#endif
+
 /*
            __  __       _                          _       _       _
      /\   |  \/  |     | |                        | |     | |     | |
@@ -1369,6 +1453,7 @@ int deemphasis_nfm_ff (float* input, float* output, int input_size, int sample_r
     DNFMFF_ADD_ARRAY(8000)
     DNFMFF_ADD_ARRAY(11025)
     DNFMFF_ADD_ARRAY(12000)
+    DNFMFF_ADD_ARRAY(24000)
 
     if(!taps_length) return 0; //sample rate n
     int i;
@@ -2584,6 +2669,132 @@ void dbpsk_decoder_c_u8(complexf* input, unsigned char* output, int input_size)
         else output[i]=1;
         last_input = input[i];
     }
+}
+
+#define CW_QUANTUM_MSEC (10)
+
+static char cw_parse(int signal, int msec)
+{
+    static const char cw2char[] =
+        "##TEMNAIOGKDWRUS" // 00000000
+        "##QZYCXBJP#L#FVH"
+        "09#8#<#7#(###/-6" // <AR>
+        "1######&2###3#45"
+        "#######:####,###" // 01000000
+        "##)#!;########-#"
+        "#'###@####.#####"
+        "###?######{#####" // <SK>
+        "################" // 10000000
+        "################"
+        "################"
+        "################"
+        "################" // 11000000
+        "################"
+        "################"
+        "######$#########";
+
+    static unsigned int data = 1;
+    static unsigned int dit_time = 50;
+    static unsigned int dah_time = 250;
+    static unsigned int cur_signal = 0;
+    static unsigned int cur_time = 0;
+    static unsigned int ini_time = 0;
+
+    char result = '\0';
+
+    if((signal!=cur_signal) && (ini_time+msec<=CW_QUANTUM_MSEC))
+    {
+        ini_time += msec;
+        return(result);
+    }
+    else
+    {
+        msec += ini_time;
+        ini_time = 0;
+    }
+
+    // When signal level is low for a while, decode character
+    if(!cur_signal && (cur_time>dah_time))
+    {
+        if(data>1)
+        {
+            result = data<256? cw2char[data] : '#';
+            cur_time = 0;
+            data = 1;
+        }
+        else if(signal && (cur_time>(4*dah_time)))
+        {
+            result = ' ';
+        }
+    }
+
+    // If signal level changed...
+    if(signal!=cur_signal)
+    {
+        if(cur_signal)
+        {
+            // Parse dit or dah
+            data = (data << 1) | (cur_time<((dit_time+dah_time)>>1)? 1:0);
+
+            if(cur_time<((dit_time+dah_time)>>1))
+            {
+                dit_time = (cur_time + dit_time) >> 1;
+                dah_time = (3 * dit_time) >> 1;
+            }
+            else
+            {
+                dah_time = (dah_time + cur_time) >> 1;
+                dit_time = (dah_time << 1) / 3;
+            }
+        }
+
+        // Reset time and signal level
+        cur_signal = signal;
+        cur_time = 0;
+    }
+
+    // Update signal and time
+    cur_time += msec;
+    return(result);
+}
+
+int cw_decoder_f_u8(float* input, unsigned char* output, int input_size, int sample_rate)
+{
+    static double avgLevel = 0.0;
+    static double curLevel = 0.0;
+    static int qcount = 0;
+
+    char out;
+    int qsize;
+    int signal;
+    int i, j;
+
+    // Compute quantum size in samples
+    qsize = CW_QUANTUM_MSEC * sample_rate / 1000;
+
+    // Compute average signal level in the input
+    for(i=0, j=0 ; i<input_size ; ++i)
+    {
+        curLevel += fabs(input[i]);
+
+        // If quantum size reached...
+        if(++qcount>=qsize)
+        {
+            // Determine if we have signal or not
+            curLevel/= qcount;
+            signal   = curLevel>=0.5? 1:0;
+            avgLevel = (avgLevel + curLevel)/2.0;
+            curLevel = 0.0;
+            qcount   = 0;
+
+            // Inject current signal status into the parser
+            out = cw_parse(signal, CW_QUANTUM_MSEC);
+            if(out) output[j++] = out;
+        }
+    }
+
+    // Done
+    return(j);
 }
 
 int bfsk_demod_cf(complexf* input, float* output, int input_size, complexf* mark_filter, complexf* space_filter, int taps_length)

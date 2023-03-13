@@ -24,6 +24,7 @@ along with csdr++.  If not, see <https://www.gnu.org/licenses/>.
 #include "fmdemod.hpp"
 #include "amdemod.hpp"
 #include "dcblock.hpp"
+#include "noisefilter.hpp"
 #include "converter.hpp"
 #include "fft.hpp"
 #include "logpower.hpp"
@@ -40,6 +41,9 @@ along with csdr++.  If not, see <https://www.gnu.org/licenses/>.
 #include "dbpsk.hpp"
 #include "varicode.hpp"
 #include "timingrecovery.hpp"
+#include "cw.hpp"
+#include "rtty.hpp"
+#include "sstv.hpp"
 
 #include <iostream>
 #include <cerrno>
@@ -201,6 +205,18 @@ AmdemodCommand::AmdemodCommand(): Command("amdemod", "AM demodulation") {
 DcBlockCommand::DcBlockCommand(): Command("dcblock", "DC block") {
     callback( [this] () {
         runModule(new DcBlock());
+    });
+}
+
+ReduceNoiseCommand::ReduceNoiseCommand(): Command("reducenoise", "Reduce noise") {
+    addFifoOption();
+    add_option("-f,--fft_size", fftSize, "Number of FFT bins");
+    add_option("-w,--wnd_size", wndSize, "Filter window size");
+    add_option("-t,--threshold", dBthreshold, "Suppression threshold in dB");
+    callback( [this] () {
+        auto filter = new AFNoiseFilter(dBthreshold, fftSize, wndSize);
+        module = new FilterModule<float>(filter);
+        runModule(module);
     });
 }
 
@@ -546,5 +562,30 @@ TimingRecoveryCommand::TimingRecoveryCommand(): Command("timingrecovery", "Timin
         } else {
             std::cerr << "Invalid algorithm: \"" << algorithm << "\"\n";
         }
+    });
+}
+
+CwDecoderCommand::CwDecoderCommand(): Command("cwdecode", "CW decoder") {
+    add_option("sample_rate", sampleRate, "Sample rate")->required();
+    callback( [this] () {
+        runModule(new CwDecoder<float>(sampleRate));
+    });
+}
+
+RttyDecoderCommand::RttyDecoderCommand(): Command("rttydecode", "RTTY decoder") {
+    add_option("sample_rate", sampleRate, "Sample rate")->required();
+    add_option("freq", targetFreq, "Frequency base");
+    add_option("shift", targetWidth, "Frequency shift");
+    add_option("baud_rate", baudRate, "Baud rate");
+    add_option("reverse", reverse, "Reverse space and mark");
+    callback( [this] () {
+        runModule(new RttyDecoder<float>(sampleRate, targetFreq, targetWidth, baudRate, reverse));
+    });
+}
+
+SstvDecoderCommand::SstvDecoderCommand(): Command("sstvdecode", "SSTV decoder") {
+    add_option("sample_rate", sampleRate, "Sample rate")->required();
+    callback( [this] () {
+        runModule(new SstvDecoder<float>(sampleRate));
     });
 }

@@ -44,6 +44,7 @@ int Cli::main(int argc, char** argv) {
     app.add_subcommand(std::shared_ptr<CLI::App>(new FmdemodCommand()));
     app.add_subcommand(std::shared_ptr<CLI::App>(new AmdemodCommand()));
     app.add_subcommand(std::shared_ptr<CLI::App>(new DcBlockCommand()));
+    app.add_subcommand(std::shared_ptr<CLI::App>(new ReduceNoiseCommand()));
     app.add_subcommand(std::shared_ptr<CLI::App>(new ConvertCommand()));
     app.add_subcommand(std::shared_ptr<CLI::App>(new FftCommand()));
     app.add_subcommand(std::shared_ptr<CLI::App>(new LogPowerCommand()));
@@ -64,6 +65,9 @@ int Cli::main(int argc, char** argv) {
     app.add_subcommand(std::shared_ptr<CLI::App>(new DBPskDecoderCommand()));
     app.add_subcommand(std::shared_ptr<CLI::App>(new VaricodeDecoderCommand()));
     app.add_subcommand(std::shared_ptr<CLI::App>(new TimingRecoveryCommand()));
+    app.add_subcommand(std::shared_ptr<CLI::App>(new CwDecoderCommand()));
+    app.add_subcommand(std::shared_ptr<CLI::App>(new RttyDecoderCommand()));
+    app.add_subcommand(std::shared_ptr<CLI::App>(new SstvDecoderCommand()));
 
     app.add_subcommand(std::shared_ptr<CLI::App>(new BenchmarkCommand()));
 
